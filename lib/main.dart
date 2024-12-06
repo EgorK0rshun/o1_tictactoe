@@ -1,74 +1,125 @@
 /*
-  Этот пример демонстрирует расширенную версию игры "Крестики-нолики" на Flutter.
+  В этом варианте мы применяем ряд предложений по улучшению игры:
 
-  Что добавлено и улучшено по сравнению с предыдущим вариантом:
-  1. Вынесена логика игры в отдельный класс GameLogic, что упрощает тестирование и поддержку.
-  2. Добавлен режим игры против "компьютера" (AI):
-     - При включенном "Одиночном режиме" (single player), за игрока "O" ходит ИИ.
-     - ИИ в данном примере простой — он делает случайный ход.
-       (При желании можно расширить до алгоритма с использованием минимакса).
-  3. Добавлен выбор размера поля (3x3, 4x4 и т.д.) с помощью диалога настроек.
-  4. Добавлен выбор сложности ИИ (легкая, сложная — пока условно, без реального изменения логики).
-  5. Создан отдельный виджет для клетки игрового поля (BoardCell).
-  6. Добавлен более гибкий UI:
-     - Настройки (иконка настроек в AppBar), где можно выбрать размер поля, режим игры и сложность.
-     - Анимация при нажатии на клетку.
-  7. Идеи для тестирования (юнит-тесты) и оптимизации остались в комментариях.
+  1. Сохранение настроек и статистики:
+     - Используем пакет SharedPreferences для сохранения выбранного размера поля, режима игры (одиночная/мультиплеер),
+       сложности ИИ и статистики побед.
+     - При запуске приложения восстанавливаем эти данные.
 
-  Код готов к запуску «как есть»:
-  - Поместите этот файл в lib/main.dart вашего проекта Flutter.
-  - Выполните команду: flutter run
+  2. Темная тема (переключение темы):
+     - Добавлен переключатель темы в настройках.
+     - Тема приложения может быть светлой или темной.
+     - Состояние темы тоже сохраняется в SharedPreferences.
 
-  Идеи для тестирования, расширения и оптимизации остаются актуальными.
+  3. Подсветка выигрышной линии:
+     - Если игрок выигрывает, теперь подсвечиваем клетки выигрышной комбинации другим цветом.
+     - Для этого сохраняем выигрышный паттерн и при отрисовке клеток проверяем, входит ли индекс в выигрышную комбинацию.
+
+  4. Другие улучшения:
+     - Добавлены комментарии и более явная структура кода.
+     - Возможна локализация (идея), но не реализована сейчас полностью.
+     - Можно при желании расширить до загрузки кастомных иконок для "X" и "O".
+
+  Чтобы это работало, добавьте в pubspec.yaml зависимость:
+    dependencies:
+      shared_preferences: ^2.2.0
+
+  Затем выполните:
+    flutter pub get
+
+  И запустите:
+    flutter run
 */
 
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
-  runApp(const MyApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  SharedPreferences prefs = await SharedPreferences.getInstance();
+  runApp(MyApp(
+    prefs: prefs,
+  ));
 }
 
-/// Корневой виджет приложения.
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+/// Основной виджет приложения, умеет переключать тему.
+class MyApp extends StatefulWidget {
+  const MyApp({super.key, required this.prefs});
+  final SharedPreferences prefs;
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  late bool _isDarkMode;
+
+  @override
+  void initState() {
+    super.initState();
+    _isDarkMode = widget.prefs.getBool('darkMode') ?? false;
+  }
+
+  void _toggleTheme(bool isDark) {
+    setState(() {
+      _isDarkMode = isDark;
+      widget.prefs.setBool('darkMode', _isDarkMode);
+    });
+  }
 
   @override
   Widget build(final BuildContext context) {
     return MaterialApp(
       title: 'Крестики-нолики',
-      theme: ThemeData(
+      theme: _isDarkMode ? ThemeData.dark() : ThemeData(
         primarySwatch: Colors.deepOrange,
         brightness: Brightness.light,
       ),
-      home: const TicTacToeGamePage(),
+      home: TicTacToeGamePage(
+        prefs: widget.prefs,
+        isDarkMode: _isDarkMode,
+        onThemeChanged: _toggleTheme,
+      ),
     );
   }
 }
 
 /// Основной экран игры.
 class TicTacToeGamePage extends StatefulWidget {
-  const TicTacToeGamePage({super.key});
+  const TicTacToeGamePage({super.key, required this.prefs, required this.isDarkMode, required this.onThemeChanged});
+
+  final SharedPreferences prefs;
+  final bool isDarkMode;
+  final ValueChanged<bool> onThemeChanged;
 
   @override
   State<TicTacToeGamePage> createState() => _TicTacToeGamePageState();
 }
 
 class _TicTacToeGamePageState extends State<TicTacToeGamePage> {
-  /// Логика игры вынесена в отдельный класс.
   late GameLogic _gameLogic;
-
-  /// Режим одиночной игры против компьютера.
   bool _singlePlayer = false;
-
-  /// Текущая сложность ИИ (пока не влияет на логику, но может быть использована в будущем).
   Difficulty _difficulty = Difficulty.easy;
+  int _boardSize = 3;
 
   @override
   void initState() {
     super.initState();
-    // Инициализируем логику игры с размером поля 3x3 по умолчанию.
-    _gameLogic = GameLogic(boardSize: 3);
+    _loadSettings();
+    _gameLogic = GameLogic(
+      boardSize: _boardSize,
+      scoreX: widget.prefs.getInt('scoreX') ?? 0,
+      scoreO: widget.prefs.getInt('scoreO') ?? 0,
+    );
+  }
+
+  Future<void> _loadSettings() async {
+    setState(() {
+      _boardSize = widget.prefs.getInt('boardSize') ?? 3;
+      _singlePlayer = widget.prefs.getBool('singlePlayer') ?? false;
+      _difficulty = Difficulty.values[widget.prefs.getInt('difficulty') ?? 0];
+    });
   }
 
   @override
@@ -138,8 +189,10 @@ class _TicTacToeGamePageState extends State<TicTacToeGamePage> {
                   ),
                   itemBuilder: (final BuildContext context, final int index) {
                     final String value = _gameLogic.board[index];
+                    final bool highlight = _gameLogic.winningPattern != null && _gameLogic.winningPattern!.contains(index);
                     return BoardCell(
                       value: value,
+                      highlight: highlight,
                       onTap: () => _handleTap(index),
                     );
                   },
@@ -170,6 +223,7 @@ class _TicTacToeGamePageState extends State<TicTacToeGamePage> {
   /// Обработчик нажатия на ячейку.
   void _handleTap(final int index) {
     if (_gameLogic.makeMove(index)) {
+      _saveStats();
       // Если после хода обнаружили победителя или ничью, показать диалог.
       if (_gameLogic.gameOver) {
         _showResultDialog(_gameLogic.resultMessage);
@@ -183,10 +237,11 @@ class _TicTacToeGamePageState extends State<TicTacToeGamePage> {
     }
   }
 
-  /// Ход ИИ (простой случайный ход).
+  /// Ход ИИ.
   void _makeAiMove() {
     if (_gameLogic.gameOver) return;
     _gameLogic.makeAiMove(difficulty: _difficulty);
+    _saveStats();
     if (_gameLogic.gameOver) {
       _showResultDialog(_gameLogic.resultMessage);
     }
@@ -227,7 +282,13 @@ class _TicTacToeGamePageState extends State<TicTacToeGamePage> {
   void _resetAll() {
     setState(() {
       _gameLogic.resetAll();
+      _saveStats();
     });
+  }
+
+  Future<void> _saveStats() async {
+    await widget.prefs.setInt('scoreX', _gameLogic.scoreX);
+    await widget.prefs.setInt('scoreO', _gameLogic.scoreO);
   }
 
   /// Диалог настроек.
@@ -235,109 +296,138 @@ class _TicTacToeGamePageState extends State<TicTacToeGamePage> {
     int tempSize = _gameLogic.boardSize;
     bool tempSinglePlayer = _singlePlayer;
     Difficulty tempDifficulty = _difficulty;
+    bool tempDarkMode = widget.isDarkMode;
 
     await showDialog<void>(
       context: context,
       builder: (final BuildContext context) {
-        return AlertDialog(
-          title: const Text('Настройки'),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                const Text(
-                  'Размер поля:',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                Row(
+        return StatefulBuilder(
+          builder: (final BuildContext context, final void Function(void Function()) setStateDialog) {
+            return AlertDialog(
+              title: const Text('Настройки'),
+              content: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    for (int size in [3, 4, 5])
-                      Expanded(
-                        child: RadioListTile<int>(
-                          title: Text('${size}x$size'),
-                          value: size,
-                          groupValue: tempSize,
-                          onChanged: (final int? val) {
-                            if (val != null) {
-                              tempSize = val;
-                              setState(() {});
-                            }
-                          },
-                        ),
-                      ),
+                    const Text(
+                      'Размер поля:',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    Row(
+                      children: <Widget>[
+                        for (int size in [3, 4, 5])
+                          Expanded(
+                            child: RadioListTile<int>(
+                              title: Text('${size}x$size'),
+                              value: size,
+                              groupValue: tempSize,
+                              onChanged: (final int? val) {
+                                if (val != null) {
+                                  setStateDialog(() {
+                                    tempSize = val;
+                                  });
+                                }
+                              },
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Режим игры:',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    CheckboxListTile(
+                      title: const Text('Одиночная игра (против AI)'),
+                      value: tempSinglePlayer,
+                      onChanged: (final bool? val) {
+                        if (val != null) {
+                          setStateDialog(() {
+                            tempSinglePlayer = val;
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Сложность ИИ:',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    DropdownButton<Difficulty>(
+                      value: tempDifficulty,
+                      items: Difficulty.values.map((final Difficulty diff) {
+                        return DropdownMenuItem<Difficulty>(
+                          value: diff,
+                          child: Text(diff == Difficulty.easy ? 'Легкая' : 'Сложная'),
+                        );
+                      }).toList(),
+                      onChanged: (final Difficulty? val) {
+                        if (val != null) {
+                          setStateDialog(() {
+                            tempDifficulty = val;
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Тема:',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    SwitchListTile(
+                      title: const Text('Темная тема'),
+                      value: tempDarkMode,
+                      onChanged: (bool val) {
+                        setStateDialog(() {
+                          tempDarkMode = val;
+                        });
+                      },
+                    ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Режим игры:',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                CheckboxListTile(
-                  title: const Text('Одиночная игра (против AI)'),
-                  value: tempSinglePlayer,
-                  onChanged: (final bool? val) {
-                    if (val != null) {
-                      tempSinglePlayer = val;
-                    }
-                    setState(() {});
+              ),
+              actions: <Widget>[
+                TextButton(
+                  child: const Text('Отмена'),
+                  onPressed: () {
+                    Navigator.of(context).pop();
                   },
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Сложность ИИ:',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                DropdownButton<Difficulty>(
-                  value: tempDifficulty,
-                  items: Difficulty.values.map((final Difficulty diff) {
-                    return DropdownMenuItem<Difficulty>(
-                      value: diff,
-                      child: Text(diff == Difficulty.easy ? 'Легкая' : 'Сложная'),
-                    );
-                  }).toList(),
-                  onChanged: (final Difficulty? val) {
-                    if (val != null) {
-                      tempDifficulty = val;
-                    }
-                    setState(() {});
+                ElevatedButton(
+                  child: const Text('Применить'),
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _applySettings(tempSize, tempSinglePlayer, tempDifficulty, tempDarkMode);
                   },
                 ),
               ],
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Отмена'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-            ElevatedButton(
-              child: const Text('Применить'),
-              onPressed: () {
-                Navigator.of(context).pop();
-                _applySettings(tempSize, tempSinglePlayer, tempDifficulty);
-              },
-            ),
-          ],
+            );
+          },
         );
       },
     );
   }
 
-  /// Применяем настройки.
-  void _applySettings(final int size, final bool singlePlayer, final Difficulty diff) {
+  /// Применяем настройки и сохраняем их.
+  void _applySettings(final int size, final bool singlePlayer, final Difficulty diff, final bool darkMode) {
     setState(() {
       _singlePlayer = singlePlayer;
       _difficulty = diff;
-      _gameLogic.changeBoardSize(size);
+      widget.onThemeChanged(darkMode);
+      if (_boardSize != size) {
+        _boardSize = size;
+        _gameLogic.changeBoardSize(_boardSize);
+      }
     });
+    widget.prefs.setInt('boardSize', _boardSize);
+    widget.prefs.setBool('singlePlayer', _singlePlayer);
+    widget.prefs.setInt('difficulty', _difficulty.index);
   }
 }
 
 /// Класс, управляющий логикой игры.
 class GameLogic {
-  GameLogic({required this.boardSize}) {
+  GameLogic({required this.boardSize, this.scoreX = 0, this.scoreO = 0}) {
     _initBoard();
   }
 
@@ -351,26 +441,31 @@ class GameLogic {
   late List<String> board;
 
   /// Подсчет побед для "X".
-  int scoreX = 0;
+  int scoreX;
 
   /// Подсчет побед для "O".
-  int scoreO = 0;
+  int scoreO;
 
   /// Флаг окончания игры.
   bool _gameOver = false;
 
-  /// Сообщение о результате (например "Победил X!" или "Ничья!").
+  /// Сообщение о результате.
   String _resultMessage = '';
+
+  /// Выигрышный паттерн (список индексов клеток, образующих выигрышную линию).
+  List<int>? _winningPattern;
 
   String get currentPlayer => _currentPlayer;
   bool get gameOver => _gameOver;
   String get resultMessage => _resultMessage;
+  List<int>? get winningPattern => _winningPattern;
 
   void _initBoard() {
     board = List<String>.filled(boardSize * boardSize, '', growable: false);
     _currentPlayer = 'X';
     _gameOver = false;
     _resultMessage = '';
+    _winningPattern = null;
   }
 
   /// Смена размера поля. При этом сбрасываем текущее поле, но не сбрасываем статистику.
@@ -393,28 +488,30 @@ class GameLogic {
     return false;
   }
 
-  /// Ход ИИ - простой случайный ход (можно улучшить логику).
+  /// Ход ИИ.
   void makeAiMove({required Difficulty difficulty}) {
     if (_gameOver) return;
 
-    // Список пустых клеток
-    final List<int> emptyCells = [];
-    for (int i = 0; i < board.length; i++) {
-      if (board[i].isEmpty) {
-        emptyCells.add(i);
+    int moveIndex;
+    if (difficulty == Difficulty.easy) {
+      // Легкий уровень — случайный ход.
+      final List<int> emptyCells = [];
+      for (int i = 0; i < board.length; i++) {
+        if (board[i].isEmpty) {
+          emptyCells.add(i);
+        }
       }
+      if (emptyCells.isEmpty) {
+        _checkGameState();
+        return;
+      }
+      final Random random = Random();
+      moveIndex = emptyCells[random.nextInt(emptyCells.length)];
+    } else {
+      // Сложный уровень — minimax.
+      moveIndex = _bestMoveMinimax();
     }
 
-    if (emptyCells.isEmpty) {
-      // Нет хода, ничья.
-      _checkGameState();
-      return;
-    }
-
-    // В зависимости от сложности можно улучшить стратегию.
-    // Пока что — просто случайный ход.
-    final Random random = Random();
-    final int moveIndex = emptyCells[random.nextInt(emptyCells.length)];
     board[moveIndex] = _currentPlayer;
     _checkGameState();
     if (!_gameOver) {
@@ -422,11 +519,69 @@ class GameLogic {
     }
   }
 
+  /// Находим лучший ход для ИИ (предполагаем, что ИИ — это 'O').
+  /// Используем алгоритм minimax.
+  int _bestMoveMinimax() {
+    int bestVal = -100000;
+    int bestMove = -1;
+
+    for (int i = 0; i < board.length; i++) {
+      if (board[i].isEmpty) {
+        board[i] = 'O'; // Пробуем ход 'O'
+        int moveVal = _minimax(0, false);
+        board[i] = '';
+        if (moveVal > bestVal) {
+          bestVal = moveVal;
+          bestMove = i;
+        }
+      }
+    }
+
+    return bestMove;
+  }
+
+  /// Функция minimax для оценки позиции.
+  int _minimax(int depth, bool isMax) {
+    // Проверяем терминальные условия.
+    if (_checkWin('O')) {
+      return 10 - depth;
+    }
+    if (_checkWin('X')) {
+      return depth - 10;
+    }
+    if (!board.contains('')) {
+      return 0; // Ничья
+    }
+
+    if (isMax) {
+      int best = -100000;
+      for (int i = 0; i < board.length; i++) {
+        if (board[i].isEmpty) {
+          board[i] = 'O';
+          best = max(best, _minimax(depth + 1, false));
+          board[i] = '';
+        }
+      }
+      return best;
+    } else {
+      int best = 100000;
+      for (int i = 0; i < board.length; i++) {
+        if (board[i].isEmpty) {
+          board[i] = 'X';
+          best = min(best, _minimax(depth + 1, true));
+          board[i] = '';
+        }
+      }
+      return best;
+    }
+  }
+
   /// Проверка состояния игры после хода.
   void _checkGameState() {
-    // Проверяем победу.
-    if (_checkWin(_currentPlayer)) {
+    List<int>? pattern = _getWinPattern(_currentPlayer);
+    if (pattern != null) {
       _gameOver = true;
+      _winningPattern = pattern;
       _resultMessage = 'Победил $_currentPlayer!';
       if (_currentPlayer == 'X') {
         scoreX++;
@@ -436,16 +591,14 @@ class GameLogic {
       return;
     }
 
-    // Проверяем ничью (если нет пустых клеток).
     if (!board.contains('')) {
       _gameOver = true;
       _resultMessage = 'Ничья!';
     }
   }
 
-  /// Проверка, выиграл ли указанный игрок.
-  bool _checkWin(final String player) {
-    // Генерируем все линии (строки, столбцы, диагонали).
+  /// Проверка, выиграл ли указанный игрок и возврат выигрышной комбинации.
+  List<int>? _getWinPattern(final String player) {
     List<List<int>> winPatterns = [];
 
     // Строки
@@ -479,7 +632,6 @@ class GameLogic {
     }
     winPatterns.add(diag2);
 
-    // Проверяем, есть ли у player три (или boardSize) в ряд
     for (final List<int> pattern in winPatterns) {
       bool won = true;
       for (int idx in pattern) {
@@ -488,10 +640,14 @@ class GameLogic {
           break;
         }
       }
-      if (won) return true;
+      if (won) return pattern;
     }
 
-    return false;
+    return null;
+  }
+
+  bool _checkWin(final String player) {
+    return _getWinPattern(player) != null;
   }
 
   /// Смена текущего игрока.
@@ -514,10 +670,11 @@ class GameLogic {
 
 /// Виджет для одной клетки игрового поля.
 class BoardCell extends StatefulWidget {
-  const BoardCell({super.key, required this.value, required this.onTap});
+  const BoardCell({super.key, required this.value, required this.onTap, this.highlight = false});
 
   final String value;
   final VoidCallback onTap;
+  final bool highlight;
 
   @override
   State<BoardCell> createState() => _BoardCellState();
@@ -530,7 +687,6 @@ class _BoardCellState extends State<BoardCell> with SingleTickerProviderStateMix
   @override
   void initState() {
     super.initState();
-
     // Анимация при нажатии.
     _controller = AnimationController(
       vsync: this,
@@ -539,7 +695,6 @@ class _BoardCellState extends State<BoardCell> with SingleTickerProviderStateMix
       upperBound: 1.0,
       value: 1.0,
     );
-
     _scaleAnimation = _controller.drive(CurveTween(curve: Curves.easeInOut));
   }
 
@@ -558,13 +713,16 @@ class _BoardCellState extends State<BoardCell> with SingleTickerProviderStateMix
 
   @override
   Widget build(final BuildContext context) {
+    Color baseColor = widget.highlight
+        ? Colors.yellow.shade300
+        : Colors.deepOrange.shade50;
     return ScaleTransition(
       scale: _scaleAnimation,
       child: GestureDetector(
         onTap: _handleTap,
         child: Container(
           decoration: BoxDecoration(
-            color: Colors.deepOrange.shade50,
+            color: baseColor,
             borderRadius: BorderRadius.circular(8.0),
           ),
           child: Center(
@@ -590,38 +748,12 @@ enum Difficulty {
 }
 
 /*
-   ---------------------------
-   ВОЗМОЖНЫЕ РАСШИРЕНИЯ
-   ---------------------------
-   1. Реализовать AI более интеллектуально:
-      - Использовать алгоритм минимакса для идеальных ходов.
-      - Учитывать сложность: "Легкая" — случайный ход, "Сложная" — умный ход.
+  Дополнительные возможные улучшения:
 
-   2. Более продвинутый UI:
-      - Анимации появления "X" и "O".
-      - Кастомные иконки или изображения вместо текста.
-      - Цветовые темы, выбор стиля.
-
-   3. Дополнительные настройки:
-      - Сохранение статистики и настроек между сессиями (SharedPreferences).
-      - Многоязычная поддержка (intl пакет).
-
-   4. Расширить поле, например 5x5 с новой логикой победы (три в ряд, или пять в ряд).
-
-   ---------------------------
-   ИДЕИ ДЛЯ ТЕСТИРОВАНИЯ (Юнит-тесты)
-   ---------------------------
-   1. Проверить логику _checkWin() для разных ситуаций.
-   2. Проверить правильность смены игрока.
-   3. Проверить корректное определение ничьи.
-   4. Тестирование методов resetBoard() и resetAll().
-
-   ---------------------------
-   ОПТИМИЗАЦИЯ КОДА
-   ---------------------------
-   1. Разделение логики игры и UI уже сделано (GameLogic).
-   2. Можно вынести виджеты в отдельные файлы для лучшей структуры проекта.
-   3. Добавить менеджер состояния (Provider, Riverpod, BLoC) для управления логикой.
-   4. Добавить локализацию и тесты покрытия.
+  - Локализация: использовать intl для перевода строк.
+  - Более расширенные настройки: выбор цвета "X" и "O", выбор тем оформления, добавление музыки или звуковых эффектов.
+  - Более интеллектуальный AI для больших полей или применение эвристик.
+  - Онлайн-режим: игра по сети с другими игроками.
+  - История ходов: показать последовательность сделанных ходов.
 
 */
